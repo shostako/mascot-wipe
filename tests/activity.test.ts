@@ -8,6 +8,7 @@ const PANE = 'abcdef12-3456'
 function world(on: Parameters<Parameters<typeof test>[1]>[1], env: Record<string, string> = { OS: 'Windows_NT', LOCALAPPDATA: 'C:\\L' }, pane = PANE) {
   const clock = mock.clock(on)
   mock.env(on, env)
+  const log = { text: '' }
   const written: string[] = []
   const lines: string[] = []
   const finish = new Map<string, () => void>()
@@ -21,7 +22,7 @@ function world(on: Parameters<Parameters<typeof test>[1]>[1], env: Record<string
     return { value: undefined }
   })
   on('process.run', (_, e) => ({ value: { exitCode: 0, stdout: JSON.stringify(e).includes('Find-HostWindow') ? '555 777\r\n' : '', stderr: '' } }))
-  on('fs.read', () => ({ value: '' }))
+  on('fs.read', () => ({ value: log.text }))
   on('fs.list', () => ({ value: [] }))
   on('session.id', () => ({ value: 'abcdef12-3456' }))
   on('session.surfaces', () => ({ value: [] }))
@@ -38,7 +39,7 @@ function world(on: Parameters<Parameters<typeof test>[1]>[1], env: Record<string
     finish.set(String(e.tool_use_id), () => resolve({ result: {} }))
   }))
 
-  return { clock, written, lines, finish, chunks, last: () => written[written.length - 1] }
+  return { clock, log, written, lines, finish, chunks, last: () => written[written.length - 1] }
 }
 
 // 書き込みの列を流す。mock.clock の settle は実際の非同期の進行を待たないので、実時間で待つ
@@ -228,4 +229,24 @@ test('recap の行からも印を消す', async ($, on) => {
   })
   await $.session.append({ message: { type: 'system', subtype: 'away_summary', content: [{ type: 'text', text: '[mood:neutral]done' }] } } as any)
   expect(stored).toBe(JSON.stringify([{ type: 'text', text: 'done' }]))
+})
+
+test('/mascot status は窓と小窓の状態を返す', async ($, on) => {
+  const w = world(on)
+  await start($)
+  await settle()
+  expect(w).toBeDefined()
+  const r = await $.command.run({ command: 'mascot', args: 'status' } as any)
+  expect((r as any).text).toContain('terminal window: 555')
+  expect((r as any).text).toContain('no record yet')
+})
+
+test('/mascot status はログが切り替わって起動の行が無くても、動いていると分かる', async ($, on) => {
+  const w = world(on)
+  await start($)
+  await settle()
+  w.log.text = '2026-11-04T18:00:00 shown session=a fg=1\r\n'
+  const r = await $.command.run({ command: 'mascot', args: 'status' } as any)
+  expect((r as any).text).toContain('overlay: 2026-11-04T18:00:00 shown')
+  expect((r as any).text).not.toContain('no record yet')
 })

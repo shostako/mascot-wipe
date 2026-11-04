@@ -81,6 +81,19 @@ function sessionLine(face: string, mode: 'on' | 'off', host: string, pid: string
   return `${face} ${mode} ${host} ${pid} ${promptAt}\n`
 }
 
+// What /mascot status prints: enough to tell why no face is on the screen.
+function statusText(mode: 'on' | 'off', host: string, face: string, log: string): string {
+  const lines = log.trim().split(/\r?\n/).filter(Boolean)
+  const started = [...lines].reverse().find(line => /\b(start|exit|fatal)\b/.test(line))
+  return [
+    `mode: ${mode}`,
+    `face: ${face || 'neutral'}`,
+    `terminal window: ${host === '0' ? 'not found, so the face cannot follow this session' : host}`,
+    `overlay: ${started ?? lines[lines.length - 1] ?? 'no record yet; if this stays after a few seconds, PowerShell may be blocked on this PC'}`,
+    ...lines.filter(line => /\b(fatal|error)\b/.test(line)).slice(-3),
+  ].join('\n')
+}
+
 // The answer of Find-HostWindow.ps1. Anything else keeps the session unmatched.
 function parseHost(stdout: string): { host: string; pid: string } | undefined {
   const match = stdout.trim().match(/^(\d+) (\d+)$/)
@@ -98,6 +111,8 @@ type Face = {
   pid: string
   promptAt: number
   rotation: Timer | undefined
+  // Settles when the search for the terminal window and the launch have ended.
+  ready: Promise<unknown>
   // Writes run one after another. In parallel they can reorder and leave an old face.
   writes: Promise<void>
 }
@@ -172,7 +187,7 @@ async function findHost($: EngineInterface, face: Face) {
 }
 
 export const register: Register = on => {
-  const face: Face = { file: undefined, dir: '', mode: 'on', mood: 'neutral', shown: '', host: '0', pid: '0', promptAt: 0, rotation: undefined, writes: Promise.resolve() }
+  const face: Face = { file: undefined, dir: '', mode: 'on', mood: 'neutral', shown: '', host: '0', pid: '0', promptAt: 0, rotation: undefined, ready: Promise.resolve(), writes: Promise.resolve() }
   const activity: Activity = { phase: 'idle', running: new Map(), background: false }
 
   on('turn.start', async ($, e, next) => {
@@ -289,7 +304,7 @@ export const register: Register = on => {
   })
 
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'mascot', description: 'Show or hide the mascot for this session (on / off)', argumentHint: 'on | off' })
+    await $.command.register({ name: 'mascot', description: 'Show or hide the mascot for this session (on / off / status)', argumentHint: 'on | off | status' })
 
     // Windows only, and only in a terminal. WSL and the desktop app stay untouched.
     const windows = (await $.env.get('OS')) === 'Windows_NT'
@@ -304,8 +319,7 @@ export const register: Register = on => {
       face.shown = ''
       await refresh($, face, activity)
       await face.writes
-      void findHost($, face).catch(() => {})
-      void launch($, face).catch(() => {})
+      face.ready = Promise.allSettled([findHost($, face), launch($, face)])
     }
 
     return next(e)
@@ -327,6 +341,12 @@ export const register: Register = on => {
 
   on('command.run', { command: 'mascot' }, async ($, e) => {
     if (!face.file) return { text: 'The mascot runs only in an interactive terminal session on Windows.' }
+
+    if (e.args.trim() === 'status') {
+      await face.ready
+      const log = await $.fs.read(`${face.dir}\\wipe.log`).catch(() => '')
+      return { text: statusText(face.mode, face.host, face.shown, log) }
+    }
 
     if (e.args.trim() === 'off') {
       face.mode = 'off'
