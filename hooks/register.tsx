@@ -89,7 +89,7 @@ function statusText(mode: 'on' | 'off', host: string, face: string, log: string)
     `mode: ${mode}`,
     `face: ${face || 'neutral'}`,
     `terminal window: ${host === '0' ? 'not found, so the face cannot follow this session' : host}`,
-    `overlay: ${started ?? 'no record yet; if this stays after a few seconds, PowerShell may be blocked on this PC'}`,
+    `overlay: ${started ?? lines[lines.length - 1] ?? 'no record yet; if this stays after a few seconds, PowerShell may be blocked on this PC'}`,
     ...lines.filter(line => /\b(fatal|error)\b/.test(line)).slice(-3),
   ].join('\n')
 }
