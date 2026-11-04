@@ -7,8 +7,9 @@
     The window follows the foreground window. In Windows Terminal the window title is the title of
     the selected tab, so it is compared with the console title of each session: a tab with no
     session hides the face, and switching tabs switches the face. Among equal titles, and in other
-    terminals, the session that received a prompt last wins. It exits a few seconds after no
-    visible session is left.
+    terminals, the session that received a prompt last wins. A window whose title never matched a
+    session keeps the last prompt too, because a profile can fix the tab title. It exits a few
+    seconds after no visible session is left.
 #>
 param(
     [Parameter(Mandatory = $true)][string]$Frames,
@@ -68,6 +69,8 @@ public class WipeForm : Form {
     const string WindowsTerminalClass = "CASCADIA_HOSTING_WINDOW_CLASS";
     const long MaxLogBytes = 1024 * 1024;
     readonly Dictionary<string, Bitmap> frames;
+    // Windows whose title has matched a session. Only there does a miss mean a tab with no session.
+    readonly HashSet<long> titled = new HashSet<long>();
     readonly string sessions, logFile;
     readonly int size;
     readonly Timer timer = new Timer();
@@ -173,7 +176,8 @@ public class WipeForm : Form {
             }
         }
         if (!compare || best == null) { missTicks = 0; return best; }
-        if (bestTitled != null) { missTicks = 0; owner = ownerTitled; return bestTitled; }
+        if (bestTitled != null) { missTicks = 0; titled.Add(fg.ToInt64()); owner = ownerTitled; return bestTitled; }
+        if (!titled.Contains(fg.ToInt64())) { missTicks = 0; return best; }
         // Keep the face through a short change of title, then hide: this tab has no session.
         missTicks++;
         if (missTicks >= MissTicks) { owner = null; return null; }
