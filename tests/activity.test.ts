@@ -229,3 +229,13 @@ test('recap の行からも印を消す', async ($, on) => {
   await $.session.append({ message: { type: 'system', subtype: 'away_summary', content: [{ type: 'text', text: '[mood:neutral]done' }] } } as any)
   expect(stored).toBe(JSON.stringify([{ type: 'text', text: 'done' }]))
 })
+
+test('/mascot status は窓と小窓の状態を返す', async ($, on) => {
+  const w = world(on)
+  await start($)
+  await settle()
+  expect(w).toBeDefined()
+  const r = await $.command.run({ command: 'mascot', args: 'status' } as any)
+  expect((r as any).text).toContain('terminal window: 555')
+  expect((r as any).text).toContain('no record yet')
+})

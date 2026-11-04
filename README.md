@@ -18,6 +18,7 @@ Windows の Claude Code のターミナルの右上に、透過のマスコッ�
 
 - `/mascot off`：このセッションのマスコットを消す
 - `/mascot on`：出し直す
+- `/mascot status`：顔が出ないときの確認（窓の特定と小窓の状態）
 
 ## 知っておくこと
 
@@ -31,3 +32,17 @@ Windows の Claude Code のターミナルの右上に、透過のマスコッ�
 ## ライセンス
 
 コードは MIT、`frames/` の絵は CC0。
+
+## English
+
+A mod for Claude Code on Windows. A transparent mascot floats at the top right of your terminal window and changes its face with the reply and the work.
+
+- **Works with:** the Windows build of Claude Code in Windows Terminal, PowerShell and Command Prompt windows. It does nothing in WSL and the desktop app.
+- **Install:** `/plugin install mascot-wipe --marketplace shostako/mascot-wipe`. Nothing else to install: it runs on the PowerShell 5.1 that comes with Windows.
+- **Commands:** `/mascot off`, `/mascot on`, and `/mascot status` when no face appears.
+- **Tabs:** Windows Terminal tabs are told apart by their titles, so the face follows the selected tab and hides in a tab without a session. Tabs with the same title show the session that received a prompt last; start with `claude -n <name>` to keep them apart.
+- **Cost:** the mood marker adds a short instruction to each prompt, which uses a few tokens.
+- **Limits:** it does not run where company policy blocks PowerShell scripts.
+
+Code is MIT. The pictures in `frames/` are CC0.
+
