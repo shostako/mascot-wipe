@@ -266,6 +266,14 @@ export const register: Register = on => {
     }
   })
 
+  // The recap of a session is written by a separate model call and never passes turn.step.
+  on('session.append', ($, e, next) => {
+    const { message } = e
+    if (message.type !== 'system') return next(e)
+    const content = message.content.map(block => (block.type === 'text' ? { ...block, text: block.text.replace(TAG, '') } : block))
+    return next({ ...e, message: { ...message, content } })
+  })
+
   on('prompt.context', async ($, e, next) => {
     const result = await next(e)
     if (!face.file || face.mode === 'off') return result
