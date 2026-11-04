@@ -218,3 +218,14 @@ for (const [name, env] of [
     expect(w.written).toEqual([])
   })
 }
+
+test('recap の行からも印を消す', async ($, on) => {
+  world(on)
+  let stored = ''
+  on('session.append', (_, e, next) => {
+    stored = JSON.stringify(e.message.content)
+    return next(e)
+  })
+  await $.session.append({ message: { type: 'system', subtype: 'away_summary', content: [{ type: 'text', text: '[mood:neutral]done' }] } } as any)
+  expect(stored).toBe(JSON.stringify([{ type: 'text', text: 'done' }]))
+})

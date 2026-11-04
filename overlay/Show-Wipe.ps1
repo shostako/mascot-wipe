@@ -4,9 +4,12 @@
 .DESCRIPTION
     One window serves every session. Each session writes a file in Sessions:
         <face> <mode> <host window> <claude pid> <last prompt ms>
-    The window follows the foreground window. Among the sessions hosted there it shows the one
-    that received a prompt last, so tabs of one terminal window share the face of the session
-    last typed into. It exits a few seconds after no visible session is left.
+    The window follows the foreground window. In Windows Terminal the window title is the title of
+    the selected tab, so it is compared with the console title of each session: a tab with no
+    session hides the face, and switching tabs switches the face. Among equal titles, and in other
+    terminals, the session that received a prompt last wins. A window whose title never matched a
+    session keeps the last prompt too, because a profile can fix the tab title. It exits a few
+    seconds after no visible session is left.
 #>
 param(
     [Parameter(Mandatory = $true)][string]$Frames,
@@ -33,6 +36,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows.Forms;
 
 public class WipeForm : Form {
@@ -50,18 +54,28 @@ public class WipeForm : Form {
     [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr dc, IntPtr obj);
     [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr obj);
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+    [DllImport("kernel32.dll")] static extern bool FreeConsole();
+    [DllImport("kernel32.dll")] static extern bool AttachConsole(uint pid);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern uint GetConsoleTitle(StringBuilder s, uint n);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
 
     const int IdleExitTicks = 50;
+    // A title can change between the two reads. Hide only when it stays unmatched this many ticks.
+    const int MissTicks = 5;
+    const string WindowsTerminalClass = "CASCADIA_HOSTING_WINDOW_CLASS";
     const long MaxLogBytes = 1024 * 1024;
     readonly Dictionary<string, Bitmap> frames;
+    // Windows whose title has matched a session. Only there does a miss mean a tab with no session.
+    readonly HashSet<long> titled = new HashSet<long>();
     readonly string sessions, logFile;
     readonly int size;
     readonly Timer timer = new Timer();
-    string face = "neutral", shown = null, logged = "";
-    int lastX = int.MinValue, lastY = int.MinValue, idleTicks = 0;
+    string face = "neutral", shown = null, logged = "", shownOwner = null, shownFace = null;
+    int lastX = int.MinValue, lastY = int.MinValue, idleTicks = 0, missTicks = 0;
 
     protected override bool ShowWithoutActivation { get { return true; } }
     protected override CreateParams CreateParams {
@@ -102,12 +116,45 @@ public class WipeForm : Form {
         catch (System.ComponentModel.Win32Exception) { return true; }
     }
 
+    static string WindowText(IntPtr h) {
+        StringBuilder s = new StringBuilder(1024);
+        GetWindowText(h, s, s.Capacity);
+        return s.ToString();
+    }
+
+    static bool IsWindowsTerminal(IntPtr h) {
+        StringBuilder s = new StringBuilder(256);
+        GetClassName(h, s, s.Capacity);
+        return s.ToString() == WindowsTerminalClass;
+    }
+
+    // The title of the console that holds the process, or null when it cannot be read.
+    static string ConsoleTitle(int pid) {
+        FreeConsole();
+        if (!AttachConsole((uint)pid)) return null;
+        StringBuilder s = new StringBuilder(1024);
+        GetConsoleTitle(s, (uint)s.Capacity);
+        FreeConsole();
+        return s.ToString();
+    }
+
+    // Claude Code animates a mark at the start of the title while it works.
+    static string Plain(string title) {
+        int i = 0;
+        while (i < title.Length && !char.IsLetterOrDigit(title[i])) i++;
+        return title.Substring(i);
+    }
+
     // Returns the face for the foreground window, or null. Removes the files of crashed sessions.
     string Pick(IntPtr fg, out int visible, out string owner) {
         visible = 0;
         owner = null;
-        string best = null;
-        long newest = long.MinValue;
+        string best = null, bestTitled = null, ownerTitled = null;
+        long newest = long.MinValue, newestTitled = long.MinValue;
+        bool terminal = IsWindowsTerminal(fg);
+        string want = terminal ? Plain(WindowText(fg)) : "";
+        // A terminal set not to use the tab title has nothing to compare, so the last prompt decides.
+        bool compare = terminal && want.Length > 0 && want != "Windows Terminal";
         foreach (string path in Directory.GetFiles(sessions)) {
             string[] w;
             try { w = File.ReadAllText(path).Trim().Split(' '); }
@@ -121,9 +168,21 @@ public class WipeForm : Form {
             }
             if (w[1] == "off") continue;
             visible++;
-            if (host == fg.ToInt64() && prompt > newest) { newest = prompt; best = w[0]; owner = Path.GetFileName(path); }
+            if (host != fg.ToInt64()) continue;
+            if (prompt > newest) { newest = prompt; best = w[0]; owner = Path.GetFileName(path); }
+            if (compare && prompt > newestTitled) {
+                string title = ConsoleTitle(pid);
+                if (title != null && Plain(title) == want) { newestTitled = prompt; bestTitled = w[0]; ownerTitled = Path.GetFileName(path); }
+            }
         }
-        return best;
+        if (!compare || best == null) { missTicks = 0; return best; }
+        if (bestTitled != null) { missTicks = 0; titled.Add(fg.ToInt64()); owner = ownerTitled; return bestTitled; }
+        if (!titled.Contains(fg.ToInt64())) { missTicks = 0; return best; }
+        // Keep the face through a short change of title, then hide: this tab has no session.
+        missTicks++;
+        if (missTicks >= MissTicks) { owner = null; return null; }
+        owner = shownOwner;
+        return shownFace;
     }
 
     void Tick() {
@@ -134,6 +193,7 @@ public class WipeForm : Form {
             string pick = Pick(fg, out visible, out owner);
             idleTicks = visible == 0 ? idleTicks + 1 : 0;
             if (idleTicks >= IdleExitTicks) { Log("exit"); Application.Exit(); return; }
+            shownOwner = owner; shownFace = pick;
             string state = pick == null ? "hidden" : "shown session=" + owner;
             if (state != logged) { logged = state; Log(state + " fg=" + fg.ToInt64()); }
             RECT r;
