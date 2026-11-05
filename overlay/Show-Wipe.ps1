@@ -62,6 +62,7 @@ public class WipeForm : Form {
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+    [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int hh, uint flags);
 
     const int IdleExitTicks = 50;
     // A title can change between the two reads. Hide only when it stays unmatched this many ticks.
@@ -200,7 +201,15 @@ public class WipeForm : Form {
             if (pick != null && !IsIconic(fg) && GetWindowRect(fg, out r)) {
                 if (frames.ContainsKey(pick)) face = pick;
                 int x = r.Right - size - 14, y = r.Top + 10;
-                if (!Visible) { Show(); shown = null; }
+                if (!Visible) {
+                    Show();
+                    // WS_EX_TOPMOST set in CreateParams only raises the style bit; a window
+                    // created with WS_EX_NOACTIVATE may never enter the topmost band, leaving
+                    // the wipe underneath full-screen (translucent) terminals. Insert it
+                    // explicitly. 0x13 = SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE.
+                    SetWindowPos(Handle, new IntPtr(-1), 0, 0, 0, 0, 0x13);
+                    shown = null;
+                }
                 if (shown != face || x != lastX || y != lastY) {
                     Draw(frames[face], x, y);
                     shown = face; lastX = x; lastY = y;
